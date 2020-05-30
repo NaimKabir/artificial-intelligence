@@ -1,5 +1,7 @@
-
+from uuid import uuid4
 from sample_players import DataPlayer
+
+MAX_BOOK_LEVEL = 5  # how far down the turn tree we'll maintain a book for
 
 
 class CustomPlayer(DataPlayer):
@@ -20,6 +22,7 @@ class CustomPlayer(DataPlayer):
       any pickleable object to the self.context attribute.
     **********************************************************************
     """
+
     def get_action(self, state):
         """ Employ an adversarial search technique to choose an action
         available in the current state calls self.queue.put(ACTION) at least
@@ -43,13 +46,38 @@ class CustomPlayer(DataPlayer):
         # EXAMPLE: choose a random move without any search--this function MUST
         #          call self.queue.put(ACTION) at least once before time expires
         #          (the timer is automatically managed for you)
+
+        if self.context is None:
+            self.context = {
+                "current_path": {},
+                "next_path": {},
+                "runid": uuid4(),
+            }
+
         depth_limit = 1
+
         while True:
+            if state.ply_count % 2 == 1 and state.ply_count > 2:
+                # Update our current path with what the opponent did, so we can make
+                # a judgment.
+                self.context["current_path"][state.ply_count - 1] = state.locs[1]
+
             choice = self.alpha_beta_search(state, depth_limit=depth_limit)
+
+            print(f"Current path {state.ply_count}, {self.context['runid']}:", self.context["current_path"])
+
+            # Keep track of the choice we've just made to inform the next choice.
+            # NOTE: Context must be updated before sending objects to the queue; the queue is what
+            # passes context forward through turns.
+            new_loc = int(choice) + state.locs[0] if state.locs[0] is not None else choice
+            self.context["next_path"] = {**self.context["current_path"], **{state.ply_count: new_loc}}
+
+            print(f"Next path {state.ply_count}:", self.context["next_path"])
+
             self.queue.put(choice)
 
+            # Iteratively deepen
             depth_limit += 1
-
 
     def alpha_beta_search(self, gameState, depth_limit):
         """ Return the move along a branch of the game tree that
@@ -113,8 +141,13 @@ class CustomPlayer(DataPlayer):
         return v
 
     def evaluation(self, gameState):
+        """
+        Use an extension of Warnsdorff's heuristic for finding a Knight's Tour on an arbitrary board:
+        Minimize the "accessibility" of your position, and maximize the accessibility of your opponent's position.
+        :param gameState:
+        :return:
+        """
         my_position = gameState.locs[0]
         opponent_position = gameState.locs[1]
 
-        return len(gameState.liberties(my_position)) - len(gameState.liberties(opponent_position))
-
+        return len(gameState.liberties(opponent_position)) - 2 * len(gameState.liberties(my_position))

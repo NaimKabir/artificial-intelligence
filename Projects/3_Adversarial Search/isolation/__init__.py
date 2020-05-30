@@ -129,7 +129,9 @@ def _play(agents, game_state, time_limit, match_id, debug=False):
         winner, loser = agents[1 - active_idx], agents[active_idx]
 
         try:
+            print("Overworld ctx:", players[1].context)
             action = fork_get_action(game_state, players[active_idx], time_limit, debug)
+            print("Overworld ctx 2:", players[1].context)
         except Empty:
             status = Status.TIMEOUT
             logger.warn(textwrap.dedent("""\
@@ -180,6 +182,7 @@ def fork_get_action(game_state, active_player, time_limit, debug=False):
             if p and p.is_alive(): p.terminate()
     new_context, action = action_queue.get_nowait()  # raises Empty if agent did not respond
     active_player.context = new_context
+    print("Set context:", active_player.context)
     return action
 
 

@@ -56,7 +56,7 @@ class CustomPlayer(DataPlayer):
 
         depth_limit = 1
 
-        while True:
+        while depth_limit < 2:
             if state.ply_count % 2 == 1 and state.ply_count > 2:
                 # Update our current path with what the opponent did, so we can make
                 # a judgment.
@@ -64,7 +64,7 @@ class CustomPlayer(DataPlayer):
 
             choice = self.alpha_beta_search(state, depth_limit=depth_limit)
 
-            print(f"Current path {state.ply_count}, {self.context['runid']}:", self.context["current_path"])
+            #print(f"Current path {state.ply_count}, {self.context['runid']}:", self.context["current_path"])
 
             # Keep track of the choice we've just made to inform the next choice.
             # NOTE: Context must be updated before sending objects to the queue; the queue is what
@@ -72,7 +72,7 @@ class CustomPlayer(DataPlayer):
             new_loc = int(choice) + state.locs[0] if state.locs[0] is not None else choice
             self.context["next_path"] = {**self.context["current_path"], **{state.ply_count: new_loc}}
 
-            print(f"Next path {state.ply_count}:", self.context["next_path"])
+            #print(f"Next path {state.ply_count}:", self.context["next_path"])
 
             self.queue.put(choice)
 

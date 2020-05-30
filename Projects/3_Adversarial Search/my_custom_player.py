@@ -1,4 +1,4 @@
-from uuid import uuid4
+from isolation.isolation import DebugState, _BLANK_BOARD
 from sample_players import DataPlayer
 
 MAX_BOOK_LEVEL = 5  # how far down the turn tree we'll maintain a book for
@@ -48,31 +48,35 @@ class CustomPlayer(DataPlayer):
         #          (the timer is automatically managed for you)
 
         if self.context is None:
+
+            print(DebugState.from_state(state))
+
             self.context = {
                 "current_path": {},
                 "next_path": {},
-                "runid": uuid4(),
+                "order": 0 if state.board - _BLANK_BOARD == 0 else 1
             }
 
         depth_limit = 1
 
         while depth_limit < 2:
-            if state.ply_count % 2 == 1 and state.ply_count > 2:
+            opponent_idx = 1 - self.context["order"]
+
+            if self.context.get("next_path", None) is not None:
+                self.context["current_path"] = {**self.context["current_path"], **self.context["next_path"]}
+            if state.locs[opponent_idx] is not None:
                 # Update our current path with what the opponent did, so we can make
                 # a judgment.
-                self.context["current_path"][state.ply_count - 1] = state.locs[1]
+                self.context["current_path"][state.ply_count - 1] = state.locs[opponent_idx]
 
             choice = self.alpha_beta_search(state, depth_limit=depth_limit)
-
-            #print(f"Current path {state.ply_count}, {self.context['runid']}:", self.context["current_path"])
 
             # Keep track of the choice we've just made to inform the next choice.
             # NOTE: Context must be updated before sending objects to the queue; the queue is what
             # passes context forward through turns.
             new_loc = int(choice) + state.locs[0] if state.locs[0] is not None else choice
-            self.context["next_path"] = {**self.context["current_path"], **{state.ply_count: new_loc}}
-
-            #print(f"Next path {state.ply_count}:", self.context["next_path"])
+            self.context["next_path"] = self.context["current_path"].copy()
+            self.context["next_path"][state.ply_count] = new_loc
 
             self.queue.put(choice)
 

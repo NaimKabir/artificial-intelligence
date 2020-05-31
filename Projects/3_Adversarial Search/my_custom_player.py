@@ -1,5 +1,6 @@
 from isolation.isolation import DebugState, _BLANK_BOARD
 from sample_players import DataPlayer
+from transform import transform
 
 MAX_BOOK_LEVEL = 5  # how far down the turn tree we'll maintain a book for
 
@@ -51,11 +52,21 @@ class CustomPlayer(DataPlayer):
 
             print(DebugState.from_state(state))
 
+            # Who started the game: if only one loc has been populated, the opponent did.
+            # If two locs have been populated, then we started. If no locs have been populated, we started.
+            board_check = int(state.locs[0] is not None) + int(state.locs[1] is not None)
+            order = 0 if board_check in (0, 2) else 1
+
             self.context = {
                 "current_path": {},
                 "next_path": {},
-                "order": 0 if state.board - _BLANK_BOARD == 0 else 1
+                "order": order,
             }
+
+            # In some runs both initial states are set, so we need to incorporate that into our path history.
+
+            if state.locs[self.context["order"]] is not None:
+                self.context["current_path"][state.ply_count - 2] = state.locs[self.context["order"]]
 
         depth_limit = 1
 
@@ -64,19 +75,22 @@ class CustomPlayer(DataPlayer):
 
             if self.context.get("next_path", None) is not None:
                 self.context["current_path"] = {**self.context["current_path"], **self.context["next_path"]}
-            if state.locs[opponent_idx] is not None:
+            if state.locs[opponent_idx] is not None and MAX_BOOK_LEVEL - 1 not in self.context["current_path"].keys():
                 # Update our current path with what the opponent did, so we can make
                 # a judgment.
                 self.context["current_path"][state.ply_count - 1] = state.locs[opponent_idx]
 
+            # Decision-making
+            print(self.context)
             choice = self.alpha_beta_search(state, depth_limit=depth_limit)
 
             # Keep track of the choice we've just made to inform the next choice.
             # NOTE: Context must be updated before sending objects to the queue; the queue is what
             # passes context forward through turns.
-            new_loc = int(choice) + state.locs[0] if state.locs[0] is not None else choice
-            self.context["next_path"] = self.context["current_path"].copy()
-            self.context["next_path"][state.ply_count] = new_loc
+            if MAX_BOOK_LEVEL - 1 not in self.context["next_path"].keys():
+                new_loc = int(choice) + state.locs[0] if state.locs[self.context["order"]] is not None else choice
+                self.context["next_path"] = self.context["current_path"].copy()
+                self.context["next_path"][state.ply_count] = new_loc
 
             self.queue.put(choice)
 
@@ -96,6 +110,8 @@ class CustomPlayer(DataPlayer):
         beta = float("inf")
         best_score = float("-inf")
         best_move = None
+        print("loc: ", gameState.locs[self.context["order"]])
+        print("actions: ", gameState.actions())
         for a in gameState.actions():
             v = self.min_value(gameState.result(a), alpha, beta, depth_limit=depth_limit, depth=1)
             if v > best_score:
@@ -148,10 +164,28 @@ class CustomPlayer(DataPlayer):
         """
         Use an extension of Warnsdorff's heuristic for finding a Knight's Tour on an arbitrary board:
         Minimize the "accessibility" of your position, and maximize the accessibility of your opponent's position.
-        :param gameState:
+        :param gameState: A gamestate resulting from an action.
         :return:
         """
-        my_position = gameState.locs[0]
-        opponent_position = gameState.locs[1]
+        my_position = gameState.locs[self.context["order"]]
+        opponent_position = gameState.locs[1 - self.context["order"]]
+
+        if gameState.ply_count < MAX_BOOK_LEVEL:
+            print(gameState.ply_count)
+            first = min(self.context["current_path"].keys()) if len(self.context["current_path"]) > 0 else 0
+            path = [self.context["current_path"][ix] for ix in range(first, gameState.ply_count - 1)]
+            path = tuple(path + [my_position])
+
+            # Win/loss ratios were only calculated for paths starting in the lower-right quadrant.
+            # Transform other paths to map onto these.
+            transformed_path = transform(path)
+
+            # Look up win/loss ratio for this particular path.
+            # Win-loss ratios were always calculated for the first player in the path;
+            # If we are the second player in the path, invert the ratio.
+            ratio = abs(self.context["order"] - self.data[transformed_path])
+
+            return ratio
+
 
         return len(gameState.liberties(opponent_position)) - 2 * len(gameState.liberties(my_position))

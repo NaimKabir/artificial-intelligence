@@ -131,7 +131,6 @@ def _play(agents, game_state, time_limit, match_id, debug=False):
         winner, loser = agents[1 - active_idx], agents[active_idx]
 
         try:
-            print(active_idx)
             action = fork_get_action(game_state, players[active_idx], time_limit, debug)
         except Empty:
             status = Status.TIMEOUT

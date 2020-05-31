@@ -1,8 +1,12 @@
 from isolation.isolation import DebugState, _BLANK_BOARD
 from sample_players import DataPlayer
 from transform import transform
+import random
 
 MAX_BOOK_LEVEL = 5  # how far down the turn tree we'll maintain a book for
+
+BASELINE = False
+DEPTH_LIMIT = 3.5
 
 
 class CustomPlayer(DataPlayer):
@@ -49,9 +53,6 @@ class CustomPlayer(DataPlayer):
         #          (the timer is automatically managed for you)
 
         if self.context is None:
-
-            print(DebugState.from_state(state))
-
             # Who started the game: if only one loc has been populated, the opponent did.
             # If two locs have been populated, then we started. If no locs have been populated, we started.
             board_check = int(state.locs[0] is not None) + int(state.locs[1] is not None)
@@ -68,21 +69,36 @@ class CustomPlayer(DataPlayer):
             if state.locs[self.context["order"]] is not None:
                 self.context["current_path"][state.ply_count - 2] = state.locs[self.context["order"]]
 
+        # Update context
+
+        opponent_idx = 1 - self.context["order"]
+        if self.context.get("next_path", None) is not None:
+            self.context["current_path"] = {**self.context["current_path"], **self.context["next_path"]}
+
+        if state.locs[opponent_idx] is not None and MAX_BOOK_LEVEL - 1 not in self.context["current_path"].keys():
+            # Update our current path with what the opponent did, so we can make
+            # a judgment.
+            self.context["current_path"][state.ply_count - 1] = state.locs[opponent_idx]
+
         depth_limit = 1
 
-        while depth_limit < 2:
-            opponent_idx = 1 - self.context["order"]
-
-            if self.context.get("next_path", None) is not None:
-                self.context["current_path"] = {**self.context["current_path"], **self.context["next_path"]}
-            if state.locs[opponent_idx] is not None and MAX_BOOK_LEVEL - 1 not in self.context["current_path"].keys():
-                # Update our current path with what the opponent did, so we can make
-                # a judgment.
-                self.context["current_path"][state.ply_count - 1] = state.locs[opponent_idx]
+        while depth_limit < DEPTH_LIMIT:
+            path = None
+            if state.ply_count < MAX_BOOK_LEVEL:
+                path = [self.context["current_path"][ix] for ix in range(state.ply_count)]
 
             # Decision-making
-            print(self.context)
-            choice = self.alpha_beta_search(state, depth_limit=depth_limit)
+            if BASELINE and state.ply_count <= MAX_BOOK_LEVEL:
+                # In the BASELINE case we just select a random move as opposed to relying on a Book
+                # or Minimax search.
+                choice = random.choice(state.actions())
+                new_loc = int(choice) + state.locs[0] if state.locs[self.context["order"]] is not None else choice
+                self.context["next_path"] = self.context["current_path"].copy()
+                self.context["next_path"][state.ply_count] = new_loc
+                self.queue.put(choice)
+                return
+
+            choice = self.alpha_beta_search(state, depth_limit=depth_limit, path=path)
 
             # Keep track of the choice we've just made to inform the next choice.
             # NOTE: Context must be updated before sending objects to the queue; the queue is what
@@ -97,7 +113,7 @@ class CustomPlayer(DataPlayer):
             # Iteratively deepen
             depth_limit += 1
 
-    def alpha_beta_search(self, gameState, depth_limit):
+    def alpha_beta_search(self, gameState, depth_limit, path):
         """ Return the move along a branch of the game tree that
         has the best possible value.  A move is a pair of coordinates
         in (column, row) order corresponding to a legal move for
@@ -110,18 +126,17 @@ class CustomPlayer(DataPlayer):
         beta = float("inf")
         best_score = float("-inf")
         best_move = None
-        print("loc: ", gameState.locs[self.context["order"]])
-        print("actions: ", gameState.actions())
         for a in gameState.actions():
-            v = self.min_value(gameState.result(a), alpha, beta, depth_limit=depth_limit, depth=1)
+            next_loc = a if gameState.locs[self.context["order"]] is None else int(a) + gameState.locs[self.context["order"]]
+            next_path = path + [next_loc] if path is not None else None
+            v = self.min_value(gameState.result(a), alpha, beta, depth_limit=depth_limit, depth=1, path=next_path)
             if v > best_score:
                 best_score = v
                 best_move = a
                 alpha = v
         return best_move
 
-    # TODO: modify the function signature to accept an alpha and beta parameter
-    def min_value(self, gameState, alpha, beta, depth_limit, depth=0):
+    def min_value(self, gameState, alpha, beta, depth_limit, path, depth=0):
         """ Return the value for a win (+1) if the game is over,
         otherwise return the minimum value over all legal child
         nodes.
@@ -130,18 +145,19 @@ class CustomPlayer(DataPlayer):
             return gameState.utility(0)
 
         if depth >= depth_limit:
-            return self.evaluation(gameState)
+            return self.evaluation(gameState, path)
 
         v = float("inf")
         for a in gameState.actions():
-            v = min(v, self.max_value(gameState.result(a), alpha, beta, depth_limit, depth + 1))
+            next_loc = int(a) + gameState.locs[gameState.player()] if gameState.locs[gameState.player()] is not None else a
+            next_path = path + [next_loc] if path is not None else None
+            v = min(v, self.max_value(gameState.result(a), alpha, beta, depth_limit, next_path, depth + 1))
             if v <= alpha:
                 return v
             beta = min(v, beta)
         return v
 
-    # TODO: modify the function signature to accept an alpha and beta parameter
-    def max_value(self, gameState, alpha, beta, depth_limit, depth=0):
+    def max_value(self, gameState, alpha, beta, depth_limit, path, depth=0):
         """ Return the value for a loss (-1) if the game is over,
         otherwise return the maximum value over all legal child
         nodes.
@@ -150,17 +166,19 @@ class CustomPlayer(DataPlayer):
             return gameState.utility(0)
 
         if depth >= depth_limit:
-            return self.evaluation(gameState)
+            return self.evaluation(gameState, path)
 
         v = float("-inf")
         for a in gameState.actions():
-            v = max(v, self.min_value(gameState.result(a), alpha, beta, depth_limit, depth + 1))
+            next_loc = int(a) + gameState.locs[gameState.player()] if gameState.locs[gameState.player()] is not None else a
+            next_path = path + [next_loc] if path is not None else None
+            v = max(v, self.min_value(gameState.result(a), alpha, beta, depth_limit, next_path, depth + 1))
             if v >= beta:
                 return v
             alpha = max(v, alpha)
         return v
 
-    def evaluation(self, gameState):
+    def evaluation(self, gameState, path=None):
         """
         Use an extension of Warnsdorff's heuristic for finding a Knight's Tour on an arbitrary board:
         Minimize the "accessibility" of your position, and maximize the accessibility of your opponent's position.
@@ -170,22 +188,16 @@ class CustomPlayer(DataPlayer):
         my_position = gameState.locs[self.context["order"]]
         opponent_position = gameState.locs[1 - self.context["order"]]
 
-        if gameState.ply_count < MAX_BOOK_LEVEL:
-            print(gameState.ply_count)
-            first = min(self.context["current_path"].keys()) if len(self.context["current_path"]) > 0 else 0
-            path = [self.context["current_path"][ix] for ix in range(first, gameState.ply_count - 1)]
-            path = tuple(path + [my_position])
-
+        if path is not None and len(path) <= MAX_BOOK_LEVEL and not BASELINE:
             # Win/loss ratios were only calculated for paths starting in the lower-right quadrant.
             # Transform other paths to map onto these.
-            transformed_path = transform(path)
+            transformed_path = transform(tuple(path))
 
             # Look up win/loss ratio for this particular path.
             # Win-loss ratios were always calculated for the first player in the path;
             # If we are the second player in the path, invert the ratio.
             ratio = abs(self.context["order"] - self.data[transformed_path])
-
             return ratio
 
 
-        return len(gameState.liberties(opponent_position)) - 2 * len(gameState.liberties(my_position))
+        return len(gameState.liberties(my_position)) - len(gameState.liberties(opponent_position))
